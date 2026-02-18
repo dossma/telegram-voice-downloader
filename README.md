@@ -35,6 +35,11 @@ Required external libraries are
 pip install telethon
 ```
 
+Downloading can be rather slow. Then you can consider installing cryptg so that decrypting the received data is done in C instead of Python (much faster).
+
+```sh
+pip install cryptg
+```
 ## Meta
 
 Author: Jonas Dossmann
