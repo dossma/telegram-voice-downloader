@@ -1,32 +1,47 @@
 from telethon import TelegramClient, events, sync
-from telethon.tl.types import InputMessagesFilterRoundVoice
+# from telethon.tl.types import InputMessagesFilterRoundVoice
+import telethon.tl.types
 import os.path
 #from os.path import exists
 import logging
-
+import cleanup_filename
 '''
 Notice:
 This program uses the Telegram API and is part of the Telegram ecosystem.
+Downloader with archiving functionality and media filter option 
 '''
 
 # Input parameter:
-folder = r"f:\path\to\your\targetfolder"  # The folder where your files and the ID repository file are to be saved.
+fullpath = r"f:\path\to\your\targetfolder"  # The folder where your files and the ID repository file are to be saved.
 channel = "channelname"  # Type here in the channel's name. The full link  https://t.me/channelname should work too.
-limit = 100  # value which indicates how many files you want to download, set it to <None> for no limit
+limit = 10  # value which indicates how many files you want to download, set it to <None> for no limit
+media_filter = None  # Possible options: "Audio" | "Speech" | "Video" | "Photo" | "PhotoVideo"
 api_id = 1234567  # get your api_id from https://core.telegram.org/api/obtaining_api_id#obtaining-api-id
 api_hash = 'pasteHereYourAPIhash'  # get your api_hash from https://core.telegram.org/api/obtaining_api_id#obtaining-api-id
 # --- You're done now. Start the program. --- 
 
-os.chdir(folder)  # Change working directory to target directory
-logging.basicConfig(filename='log.log', filemode='w', level=logging.DEBUG)
+os.chdir(fullpath)  # Change working directory to target directory
+logging.basicConfig(filename='telegram-downloader-log.log', filemode='w', level=logging.INFO)
 
-client = TelegramClient('session_name', api_id, api_hash)
+media_dict = {
+"Audio":telethon.tl.types.InputMessagesFilterMusic,
+"Speech":telethon.tl.types.InputMessagesFilterVoice,
+"Video":telethon.tl.types.InputMessagesFilterVideo,
+"Photo":telethon.tl.types.InputMessagesFilterPhotos,
+"PhotoVideo":telethon.tl.types.InputMessagesFilterPhotoVideo  # Filter for messages containing photos or videos.
+# "Alles":telethon.tl.types.TypeMessageMedia
+}
+
+filter_selected = media_dict.get(media_filter)  # Modus-Filter für Telegram wird aus Dict selektiert, Achtung: get_messages-Funktion nimmt nur MessagesFilter, kein z.B. telethon.tl.types.TypeMessageMedia!
+print("Media modus selected:", str(media_filter))
+
+client = TelegramClient('Telegram-Downloader', api_id, api_hash)
 print("Starting Client")
 client.start()
 logging.info("Client startet")
 
 print("Collect entries")
-msgs = client.get_messages(entity=channel, limit=limit, filter=InputMessagesFilterRoundVoice)
+msgs = client.get_messages(entity=channel, limit=limit, filter=filter_selected)
 print(len(msgs), "entries collected")
 
 errlist = []  # Not downloaded message-names due to error
@@ -35,21 +50,24 @@ counter = 0  # Counter how many messages are left
 counter_unknown = 0  # Counter for messages left which have no name attribute
 
 # Establishing list of voice message IDs to prevent downloading duplicates
-id_rep_file = open('id_list.txt', 'a')  # List with saved IDs, a+ for establishing as required, read + write
+# if not os.path.isfile('id_list.txt'):  # Prüfen ob Datei vorhanden, sonst erzeugen
+#     open('id_list.txt', 'a').close()
+id_rep_file = open('id_list.txt', 'a+')  # List with saved IDs, a+ for establishing as required, read + write
+id_rep_file.seek(0)  # Zeiger zum Anfang setzen
 id_rep = id_rep_file.read().splitlines()  # id repository
+
 id_container = []  # List with IDs, which are being requested from Telegram
-
 for msg in msgs:  # Collect IDs
-    id_container.append(msg.file.id)
+    id_container.append(str(msg.id))
 
-missingidlist = list(set(id_container).difference(id_rep))  # Filtering of duplicate entries from the two lists. Result is the files to be downloaded.
+missing_id_list = list(set(id_container).difference(id_rep))  # Filtering of duplicate entries from the two lists. Result is the files to be downloaded.
 
 for msg in msgs:
     counter += 1
 
-    file_id = msg.file.id
+    file_id = msg.id
     title = msg.text  # or possible: msg.message
-    if any(file_id in s for s in missingidlist):  # File id is not in list, therefore download it
+    if str(file_id) in missing_id_list:  # File id is not in list, therefore download it
 
         ext = msg.file.ext
         creatime = msg.date.date().isoformat()  # Date format: yyyy-mm-dd
@@ -63,19 +81,10 @@ for msg in msgs:
             filename = creatime + " unknown" + str(counter_unknown) + " " + views + "views" + ext
             counter_unknown += 1
 
-        # Replace characters which are not supported in Windows
-        filename = filename.replace("\n", " - ")
-        filename = filename.replace("\\", "-")
-        filename = filename.replace("/", "-")
-        filename = filename.replace("?", "-")
-        filename = filename.replace("\"", "!")
-        filename = filename.replace(r"*", " ! ")
-        filename = filename.replace(r"<", " ! ")
-        filename = filename.replace(r">", " ! ")
-        filename = filename.replace(r":", " - ")
+        filename = cleanup_filename.sanitize(path=fullpath, filename=filename, replace_dict=None)
 
         try:  # File is not yet in directory. Attempt to download it
-            print("Downloading of No.", counter, "of", len(msgs) - counter, "\n", filename, "File ID:", msg.file.id)
+            print("\nDownloading of No.", counter, "of", len(msgs), "\n", filename, "File ID:", msg.id)
             msg.download_media(filename)
             print("msg:", filename, "downloaded")
             # print(len(msgs) - counter, " left", "\n")
@@ -87,14 +96,14 @@ for msg in msgs:
             logging.info("msg:", filename, "ID:", file_id, "could not be downloaded\n")
             errlist.append(filename)
 
-        id_rep_file.write(file_id+"\n")  # add downloaded file ID
+        id_rep_file.write(str(file_id)+"\n")  # add downloaded file ID
 
     else:  # File is there, therefore do not download:
-        logging.debug("Skipping title: %s, ID: %s" % (title, file_id))
-
-        print(len(msgs) - counter, " left", "\n")
+        # logging.info("Skipping title: %s, ID: %s" % (title, file_id))
+        print("Skipping title: %s, ID: %s" % (title, file_id))
+        # print(len(msgs) - counter, " left", "\n")
         skipped.append(title)  # Fill list of skipped files
-        skipped.append(file_id)  # Fill list of skipped files
+        skipped.append(str(file_id))  # Fill list of skipped files
 
 id_rep_file.close()
 client.disconnect()
